@@ -33,7 +33,7 @@ class SimulationHandler:
                 self.position = player.position
 
     def simulate_own_shot(self, angle, energy):
-        missile = utils.Missile(self.position, energy, angle)
+        missile = utils.Missile(np.copy(self.position), energy, angle)
         missile_trace = []
         missile_result = utils.MissileResult.RES_UNDETERMINED
         info = 0
@@ -101,11 +101,12 @@ class SimulationHandler:
 
         return missile_result, info, missile_trace
 
-    def scan_angle(self, angle_start, angle_stop, angle_inc, energy):
-        for angle in tqdm(np.arange(angle_start, angle_stop, angle_inc)):
-            res, info, _ = self.simulate_own_shot(angle, energy)
-            if res == utils.MissileResult.RES_HIT_PLAYER and info != self.own_id:
-                print(f"Can hit other player with angle={angle} and vel={energy}")
-                break
-        else:
-            print("No angle found.")
+    def scan_angle(self, angle_arange, energy_arange):
+        results = []
+        for energy in tqdm(np.arange(*energy_arange), leave=False, colour='green', desc='energy:'):
+            for angle in tqdm(np.arange(*angle_arange), leave=False, colour='red', desc='angle:'):
+                res, info, trace = self.simulate_own_shot(angle, energy)
+                if res == utils.MissileResult.RES_HIT_PLAYER and info != self.own_id:
+                    results.append((info, len(trace), angle, energy))
+
+        print(results)

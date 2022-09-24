@@ -139,4 +139,4 @@ class AppleBot:
         if not self.simulation.initialized:
             self.msg("Simulation not yet initialized.")
             return
-        self.simulation.scan_angle(0, 360, 0.01, 10)
+        self.simulation.scan_angle((0, 360, 0.5), (9, 12, 1))
