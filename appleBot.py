@@ -1,3 +1,5 @@
+import math
+import random
 from datetime import datetime
 
 from SimulationHandler import SimulationHandler
@@ -16,13 +18,14 @@ class AppleBot:
         self.name = self.__class__.__name__
         self.planets = []
         self.players = {}
+        self.opponent_ids = []
         self.angle = 0
         self.speed = 10
         self.last_shot = []
         self.energy = 0
 
-        self.last_energy_update = datetime.now()
-        self.last_scan = datetime.now()
+        self.last_energy_update = datetime.fromtimestamp(0)
+        self.last_scan = datetime.fromtimestamp(0)
 
         self.init()
 
@@ -48,7 +51,7 @@ class AppleBot:
             return
         if not self.players:
             return
-        self.simulation.set_field(self.planets, self.players.values(), self.id)
+        self.simulation.set_field(self.planets, self.players, self.id)
 
     def process_incoming(self):
         struct_data = self.connection.receive_struct("II")
@@ -68,16 +71,26 @@ class AppleBot:
         # player left
         elif msg_type == 2:
             del self.players[payload]
+            self.opponent_ids.remove(payload)
             self.update_simulation()
 
         # player joined/reset
         elif msg_type == 3:
             x, y = self.connection.receive_struct("ff")
+
             if payload not in self.players:
                 self.msg(f"player {payload} joined the game at ({round(x)},{round(y)})")
+                if id != self.id:
+                    self.opponent_ids.append(payload)
+                new_player = Player(x, y, payload)
+
             else:
                 self.msg(f"player {payload} moved to ({round(x)},{round(y)})")
-            self.players[payload] = Player(x, y, payload)
+                new_player = self.players[payload]
+                new_player.position[0] = x
+                new_player.position[1] = y
+
+            self.players[payload] = new_player
             self.update_simulation()
 
         # shot finished msg, deprecated
@@ -137,5 +150,13 @@ class AppleBot:
             return
         if not self.simulation.initialized:
             return
+
+        target_player = self.players[random.choice(self.opponent_ids)]
+        source_player = self.players[self.id]
+        print((target_player.position[0]-source_player.position[0], target_player.position[1]-source_player.position[1]))
+        target_angle = math.atan2(target_player.position[1]-source_player.position[1],
+                                  target_player.position[0]-source_player.position[0])
+        print(f"target angle is: {math.degrees(target_angle)}°")
+
         self.simulation.scan_angle((0, 360, 0.5), (9, 12, 1))
         self.last_scan = datetime.now()
