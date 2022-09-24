@@ -25,7 +25,7 @@ class Planet:
 
 
 class Missile:
-    def __init__(self, pos, energy, angle):
+    def __init__(self, pos, angle, energy):
         angle = math.radians(angle)
 
         self.speed = np.asarray([

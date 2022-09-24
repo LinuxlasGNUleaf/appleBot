@@ -1,6 +1,8 @@
 import math
+
 import numpy as np
 from tqdm import tqdm
+
 import utils
 
 
@@ -33,7 +35,7 @@ class SimulationHandler:
                 self.position = player.position
 
     def simulate_own_shot(self, angle, energy):
-        missile = utils.Missile(np.copy(self.position), energy, angle)
+        missile = utils.Missile(np.copy(self.position), angle, energy)
         missile_trace = []
         missile_result = utils.MissileResult.RES_UNDETERMINED
         info = 0

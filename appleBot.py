@@ -1,9 +1,10 @@
-from utils import *
 from datetime import datetime
+
 from SimulationHandler import SimulationHandler
+from utils import *
 
 ENERGY_UPDATE_INTERVAL = 2
-SCAN_INTERVAL = 1
+SCAN_INTERVAL = 10
 
 
 class AppleBot:
@@ -128,15 +129,13 @@ class AppleBot:
 
         if (datetime.now() - self.last_scan).seconds > SCAN_INTERVAL:
             self.scan_field()
-            self.last_scan = datetime.now()
 
         self.process_incoming()
 
     def scan_field(self):
         if len(self.players) <= 1:
-            self.msg("Not enough players to scan.")
             return
         if not self.simulation.initialized:
-            self.msg("Simulation not yet initialized.")
             return
         self.simulation.scan_angle((0, 360, 0.5), (9, 12, 1))
+        self.last_scan = datetime.now()
