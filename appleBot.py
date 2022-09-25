@@ -5,11 +5,6 @@ from datetime import datetime
 from SimulationHandler import SimulationHandler
 from utils import *
 
-ENERGY_UPDATE_INTERVAL = 2
-SCAN_INTERVAL = 10
-SCAN_ANGLE_MARGIN = 30
-SCAN_ANGLE_INC = 0.01
-
 
 class AppleBot:
     def __init__(self, socket_manager):
@@ -20,6 +15,7 @@ class AppleBot:
         self.name = self.__class__.__name__
         self.planets = []
         self.players = {}
+        self.ignored_ids = []
         self.opponent_ids = []
         self.angle = 0
         self.speed = 10
@@ -160,16 +156,38 @@ class AppleBot:
 
         diff_y = target_player.position[1] - source_player.position[1]
         diff_x = target_player.position[0] - source_player.position[0]
-        target_angle = math.atan2(diff_y, diff_x)
-        angle_range = (target_angle - math.radians(SCAN_ANGLE_MARGIN),
-                       target_angle + math.radians(SCAN_ANGLE_MARGIN),
-                       math.radians(SCAN_ANGLE_INC))
-        res = self.simulation.scan_range(angle_range, (10, 13, 1))
-        if res[0] != -1:
-            print(f"targeting player {round(res[0])}")
-            print(res)
-            self.connection.send_str(f"v {res[2]}")
-            self.connection.send_str(f"{-math.degrees(res[1])}")
-        else:
+        target_angle = math.degrees(math.atan2(-diff_y, diff_x))
+        print(f"target angle: {target_angle}°")
+
+        print("starting broad simulation...")
+        angle_range = (math.radians(target_angle - B_SCAN_ANGLE_MARGIN),
+                       math.radians(target_angle + B_SCAN_ANGLE_MARGIN),
+                       math.radians(B_SCAN_ANGLE_INC)
+                       )
+        print(", ".join([str(round(math.degrees(angle), 1)) for angle in angle_range]))
+        res = self.simulation.scan_range(angle_range, B_VELOCITY_RANGE, target_player.id, broad=True)
+
+        if res is None:
+            print("No trajectory to this player found.")
+            self.last_scan = datetime.now()
+            return
+
+        print(f"broad trajectory to player {target_player.id} found (angle: {math.degrees(res[0])}°). starting accurate simulation...")
+        self.connection.send_str(f"v {res[1]}")
+        self.connection.send_str(f"{math.degrees(res[0])}")
+        angle_range = (res[0] - math.radians(F_SCAN_ANGLE_MARGIN),
+                       res[0] + math.radians(F_SCAN_ANGLE_MARGIN),
+                       math.radians(F_SCAN_ANGLE_INC)
+                       )
+        print(", ".join([str(round(math.degrees(angle), 1)) for angle in angle_range]))
+
+        res = self.simulation.scan_range(angle_range, res[1], target_player.id, broad=False)
+        if res is None:
             print("No angle found.")
-        self.last_scan = datetime.now()
+            self.last_scan = datetime.now()
+            return
+
+        print(f"accurate trajectory to player {target_player.id} found!")
+        print(res)
+        self.connection.send_str(f"v {res[1]}")
+        self.connection.send_str(f"{math.degrees(res[0])}")
