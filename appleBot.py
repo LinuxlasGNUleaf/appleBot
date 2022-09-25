@@ -7,6 +7,8 @@ from utils import *
 
 ENERGY_UPDATE_INTERVAL = 2
 SCAN_INTERVAL = 10
+SCAN_ANGLE_MARGIN = 30
+SCAN_ANGLE_INC = 0.01
 
 
 class AppleBot:
@@ -47,9 +49,11 @@ class AppleBot:
     def update_simulation(self):
         if self.id == -1:
             return
+        if self.id not in self.players:
+            return
         if not self.planets:
             return
-        if not self.players:
+        if not self.opponent_ids:
             return
         self.simulation.set_field(self.planets, self.players, self.id)
 
@@ -80,7 +84,7 @@ class AppleBot:
 
             if payload not in self.players:
                 self.msg(f"player {payload} joined the game at ({round(x)},{round(y)})")
-                if id != self.id:
+                if payload != self.id:
                     self.opponent_ids.append(payload)
                 new_player = Player(x, y, payload)
 
@@ -146,17 +150,26 @@ class AppleBot:
         self.process_incoming()
 
     def scan_field(self):
-        if len(self.players) <= 1:
+        if not self.opponent_ids:
             return
         if not self.simulation.initialized:
             return
 
         target_player = self.players[random.choice(self.opponent_ids)]
         source_player = self.players[self.id]
-        print((target_player.position[0]-source_player.position[0], target_player.position[1]-source_player.position[1]))
-        target_angle = math.atan2(target_player.position[1]-source_player.position[1],
-                                  target_player.position[0]-source_player.position[0])
-        print(f"target angle is: {math.degrees(target_angle)}°")
 
-        self.simulation.scan_angle((0, 360, 0.5), (9, 12, 1))
+        diff_y = target_player.position[1] - source_player.position[1]
+        diff_x = target_player.position[0] - source_player.position[0]
+        target_angle = math.atan2(diff_y, diff_x)
+        angle_range = (target_angle - math.radians(SCAN_ANGLE_MARGIN),
+                       target_angle + math.radians(SCAN_ANGLE_MARGIN),
+                       math.radians(SCAN_ANGLE_INC))
+        res = self.simulation.scan_range(angle_range, (10, 13, 1))
+        if res[0] != -1:
+            print(f"targeting player {round(res[0])}")
+            print(res)
+            self.connection.send_str(f"v {res[2]}")
+            self.connection.send_str(f"{-math.degrees(res[1])}")
+        else:
+            print("No angle found.")
         self.last_scan = datetime.now()

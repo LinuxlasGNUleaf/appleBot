@@ -1,11 +1,12 @@
 import math
 
 import numpy as np
-import scipy
-from tqdm import tqdm
 from numba import njit, double, int16
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import utils
+
+WORKER_MAX_ITERATIONS = 500
 
 A = 2e6
 BATTLE_FIELD_W: float = math.sqrt(A * 16 / 9)
@@ -24,12 +25,12 @@ class SimulationHandler:
         self.position: np.ndarray(dtype=np.float64, shape=(1, 2)) = None
         self.initialized = False
 
-        self.player_positions: np.ndarray(dtype=np.float64, shape=(MAX_PLAYERS, 2)) = None
-        self.player_ids: np.ndarray(dtype=int, shape=(MAX_PLAYERS, 1)) = None
+        self.player_positions: np.ndarray(dtype=np.float64, shape=(MAX_PLAYERS, 2)) = np.zeros((MAX_PLAYERS, 2))
+        self.player_ids: np.ndarray(dtype=int, shape=(MAX_PLAYERS,)) = np.zeros((MAX_PLAYERS,), dtype=int)
         self.player_count: int = -1
-        self.planet_positions: np.ndarray(dtype=np.float64, shape=(NUM_PLANETS, 2)) = None
-        self.planet_radii: np.ndarray(dtype=np.float64, shape=(NUM_PLANETS, 1)) = None
-        self.planet_masses: np.ndarray(dtype=np.float64, shape=(NUM_PLANETS, 1)) = None
+        self.planet_positions: np.ndarray(dtype=np.float64, shape=(NUM_PLANETS, 2)) = np.zeros((NUM_PLANETS, 2))
+        self.planet_radii: np.ndarray(dtype=np.float64, shape=(NUM_PLANETS, 0)) = np.zeros((NUM_PLANETS,))
+        self.planet_masses: np.ndarray(dtype=np.float64, shape=(NUM_PLANETS, 0)) = np.zeros((NUM_PLANETS,))
 
     def set_field(self, planets: list[utils.Planet], players: dict[int, utils.Player], own_id: int):
         self.initialized = True
@@ -39,37 +40,89 @@ class SimulationHandler:
 
         # populate numpy arrays
         players = players.values()
-        self.player_positions = np.asarray([player.position for player in players])
-        self.player_ids = np.asarray([player.id for player in players])
+        for i, player in enumerate(players):
+            self.player_positions[i] = player.position
+            self.player_ids[i] = player.id
         self.player_count = len(players)
-        self.planet_positions = np.asarray([planet.position for planet in planets])
-        self.planet_radii = np.asarray([planet.radius for planet in planets])
-        self.planet_masses = np.asarray([planet.mass for planet in planets])
 
-    def scan_angle(self, angle_range, velocity_range):
-        results = []
-        for velocity in tqdm(np.arange(*velocity_range), leave=False, colour='green', desc='velocity:'):
-            for angle in tqdm(np.arange(*angle_range), leave=False, colour='red', desc='angle:'):
-                res = np.zeros((3, 1))
-                simulate_shot_f(planet_positions=self.planet_positions,
-                                planet_radii=self.planet_radii,
-                                planet_masses=self.planet_masses,
-                                player_positions=self.player_positions,
-                                player_ids=self.player_ids,
-                                player_count=self.player_count,
-                                position=np.copy(self.position),
-                                angle=angle,
-                                velocity=velocity,
-                                own_id=self.own_id,
-                                result=res
-                                )
-                if res[0] != -1:
-                    results.append(res)
-                pass
-        print(results)
+        for i, planet in enumerate(planets):
+            self.planet_positions[i] = planet.position
+            self.planet_radii[i] = planet.radius
+            self.planet_masses[i] = planet.mass
+
+    def scan_range(self, angle_range, velocity_range):
+        tmp_angles = np.arange(*angle_range)
+        print(len(tmp_angles))
+        with ThreadPoolExecutor(max_workers=16) as ex:
+            futures = []
+            for velocity in np.arange(*velocity_range):
+                ang_i = 0
+                while ang_i < len(tmp_angles):
+                    angle_slice = tmp_angles[ang_i:ang_i + WORKER_MAX_ITERATIONS]
+                    # print(f"starting worker with {len(angle_slice)} iterations.")
+                    futures.append(ex.submit(scan_angle_f,
+                                             planet_positions=self.planet_positions,
+                                             planet_radii=self.planet_radii,
+                                             planet_masses=self.planet_masses,
+                                             player_positions=self.player_positions,
+                                             player_ids=self.player_ids,
+                                             player_count=self.player_count,
+                                             position=self.position,
+                                             angle_range=angle_slice,
+                                             angle_count=len(angle_slice),
+                                             velocity=velocity,
+                                             own_id=self.own_id
+                                             ))
+                    ang_i += WORKER_MAX_ITERATIONS
+
+            for completed_future in as_completed(futures):
+                if completed_future.result()[0] != -1:
+                    ex.shutdown(cancel_futures=True, wait=False)
+                    return completed_future.result()
+                else:
+                    print("Worker yielded no solution.")
+            else:
+                return np.asarray([-1, 0, 0])
 
 
-@njit
+
+@njit(nogil=True)
+def scan_angle_f(planet_positions: np.ndarray(dtype=np.float64, shape=(NUM_PLANETS, 2)),
+                 planet_radii: np.ndarray(dtype=np.float64, shape=(NUM_PLANETS,)),
+                 planet_masses: np.ndarray(dtype=np.float64, shape=(NUM_PLANETS,)),
+                 player_positions: np.ndarray(dtype=np.float64, shape=(MAX_PLAYERS, 2)),
+                 player_ids: np.ndarray(dtype=int, shape=(MAX_PLAYERS,)),
+                 player_count: int16,
+                 position: np.ndarray(dtype=np.float64, shape=(2,)),
+                 angle_range: np.ndarray(dtype=np.float64, shape=(1,)),
+                 angle_count: int,
+                 velocity: double,
+                 own_id: int16
+                 ) -> int16:
+    result = np.zeros(3)
+    for ang_i in range(angle_count):
+        player_id = simulate_shot_f(planet_positions=planet_positions,
+                                    planet_radii=planet_radii,
+                                    planet_masses=planet_masses,
+                                    player_positions=player_positions,
+                                    player_ids=player_ids,
+                                    player_count=player_count,
+                                    position=np.copy(position),
+                                    angle=angle_range[ang_i],
+                                    velocity=velocity,
+                                    own_id=own_id
+                                    )
+        if player_id != -1:
+            result[0] = player_id
+            result[1] = angle_range[ang_i]
+            result[2] = velocity
+            break
+    else:
+        result[0] = -1
+    return result
+
+
+@njit(nogil=True)
 def simulate_shot_f(planet_positions: np.ndarray(dtype=np.float64, shape=(NUM_PLANETS, 2)),
                     planet_radii: np.ndarray(dtype=np.float64, shape=(NUM_PLANETS, 1)),
                     planet_masses: np.ndarray(dtype=np.float64, shape=(NUM_PLANETS, 1)),
@@ -79,14 +132,12 @@ def simulate_shot_f(planet_positions: np.ndarray(dtype=np.float64, shape=(NUM_PL
                     position: np.ndarray(dtype=np.float64, shape=(1, 2)),
                     angle: double,
                     velocity: double,
-                    own_id: int16,
-                    result: np.ndarray(dtype=np.float64, shape=(3, 1))
-                    ) -> None:
-    speed = np.asarray([velocity * math.cos(angle),
-                        velocity * -math.sin(angle)],
+                    own_id: int16
+                    ) -> int16:
+    speed = np.asarray([velocity * math.cos(math.radians(angle)),
+                        velocity * -math.sin(math.radians(angle))],
                        dtype=np.float64)
 
-    result[0] = -1
     left_source: bool = False
     segment_count: int16 = 0
     while True:
@@ -97,7 +148,7 @@ def simulate_shot_f(planet_positions: np.ndarray(dtype=np.float64, shape=(NUM_PL
 
             # collision with planet?
             if distance <= planet_radii[i]:
-                return
+                return -1
 
             # normalize tmp vector
             tmp_v /= distance
@@ -120,11 +171,9 @@ def simulate_shot_f(planet_positions: np.ndarray(dtype=np.float64, shape=(NUM_PL
 
             if distance <= PLAYER_SIZE and left_source:
                 if player_ids[i] == own_id:
-                    return
+                    return -1
                 else:
-                    result[0] = player_ids[i]
-                    result[1] = angle
-                    result[2] = velocity
+                    return player_ids[i]
 
             if distance > PLAYER_SIZE + 1.0 and player_ids[i] == own_id:
                 left_source = True
@@ -134,8 +183,8 @@ def simulate_shot_f(planet_positions: np.ndarray(dtype=np.float64, shape=(NUM_PL
                 position[0] > BATTLE_FIELD_W + MARGIN or \
                 position[1] < -MARGIN or \
                 position[1] > BATTLE_FIELD_H + MARGIN:
-            return
+            return -1
 
         # check if missile trail is too long
         if segment_count >= MAX_SEGMENTS:
-            return
+            return -1
