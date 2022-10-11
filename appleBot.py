@@ -154,40 +154,8 @@ class AppleBot:
         target_player = self.players[random.choice(self.opponent_ids)]
         source_player = self.players[self.id]
 
-        diff_y = target_player.position[1] - source_player.position[1]
-        diff_x = target_player.position[0] - source_player.position[0]
-        target_angle = math.degrees(math.atan2(-diff_y, diff_x))
-        print(f"target angle: {target_angle}°")
+        result = self.simulation.scan_for(target_player.id)
+        print(result)
 
-        print("starting broad simulation...")
-        angle_range = (math.radians(target_angle - B_SCAN_ANGLE_MARGIN),
-                       math.radians(target_angle + B_SCAN_ANGLE_MARGIN),
-                       math.radians(B_SCAN_ANGLE_INC)
-                       )
-        print(", ".join([str(round(math.degrees(angle), 1)) for angle in angle_range]))
-        res = self.simulation.scan_range(angle_range, B_VELOCITY_RANGE, target_player.id, broad=True)
-
-        if res is None:
-            print("No trajectory to this player found.")
-            self.last_scan = datetime.now()
-            return
-
-        print(f"broad trajectory to player {target_player.id} found (angle: {math.degrees(res[0])}°). starting accurate simulation...")
-        self.connection.send_str(f"v {res[1]}")
-        self.connection.send_str(f"{math.degrees(res[0])}")
-        angle_range = (res[0] - math.radians(F_SCAN_ANGLE_MARGIN),
-                       res[0] + math.radians(F_SCAN_ANGLE_MARGIN),
-                       math.radians(F_SCAN_ANGLE_INC)
-                       )
-        print(", ".join([str(round(math.degrees(angle), 1)) for angle in angle_range]))
-
-        res = self.simulation.scan_range(angle_range, res[1], target_player.id, broad=False)
-        if res is None:
-            print("No angle found.")
-            self.last_scan = datetime.now()
-            return
-
-        print(f"accurate trajectory to player {target_player.id} found!")
-        print(res)
-        self.connection.send_str(f"v {res[1]}")
-        self.connection.send_str(f"{math.degrees(res[0])}")
+        self.connection.send_str(f"v {10}")
+        self.connection.send_str(f"{result}")
