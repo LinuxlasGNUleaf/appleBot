@@ -1,5 +1,6 @@
 import math
 import random
+import time
 from datetime import datetime
 
 from SimulationHandler import SimulationHandler
@@ -51,9 +52,12 @@ class AppleBot:
             return
         if not self.opponent_ids:
             return
+        print("Updating simulation...")
         self.simulation.set_field(self.planets, self.players, self.id)
 
     def process_incoming(self):
+        update_flag = False
+        self.msg("Processing incoming...")
         struct_data = self.connection.receive_struct("II")
 
         # recv timed out
@@ -66,13 +70,14 @@ class AppleBot:
         if msg_type == 1:
             self.id = payload
             self.msg(f"set id to {payload}")
-            self.update_simulation()
+            update_flag = True
 
         # player left
         elif msg_type == 2:
+            self.msg(f"Player {payload} left.")
             del self.players[payload]
             self.opponent_ids.remove(payload)
-            self.update_simulation()
+            update_flag = True
 
         # player joined/reset
         elif msg_type == 3:
@@ -91,7 +96,7 @@ class AppleBot:
                 new_player.position[1] = y
 
             self.players[payload] = new_player
-            self.update_simulation()
+            update_flag = True
 
         # shot finished msg, deprecated
         elif msg_type == 4:
@@ -105,6 +110,7 @@ class AppleBot:
 
         # shot end (discard shot data)
         elif msg_type == 6:
+            self.msg("Discarding shot data...")
             angle, velocity, length = self.connection.receive_struct("ddI")
             for i in range(length):
                 _ = self.connection.receive_struct("ff")
@@ -128,11 +134,14 @@ class AppleBot:
                 x, y, radius, mass = self.connection.receive_struct("dddd")
                 self.planets.append(Planet(x, y, radius, mass, i))
             self.msg(f"planet data for {len(self.planets)} planets received")
-            self.update_simulation()
+            update_flag = True
 
         # unknown MSG_TYPE
         else:
             self.msg(f"Unexpected message_type: '{msg_type}'\n\t- data: '{payload}'")
+
+        if update_flag:
+            self.update_simulation()
 
     def loop(self):
 
@@ -142,6 +151,7 @@ class AppleBot:
 
         if (datetime.now() - self.last_scan).seconds > SCAN_INTERVAL:
             self.scan_field()
+            self.last_scan = datetime.now()
 
         self.process_incoming()
 
@@ -152,10 +162,6 @@ class AppleBot:
             return
 
         target_player = self.players[random.choice(self.opponent_ids)]
-        source_player = self.players[self.id]
-
         result = self.simulation.scan_for(target_player.id)
-        print(result)
-
         self.connection.send_str(f"v {10}")
-        self.connection.send_str(f"{result}")
+        self.connection.send_str(f"{math.degrees(result)}")

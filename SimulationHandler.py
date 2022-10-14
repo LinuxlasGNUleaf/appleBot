@@ -1,7 +1,16 @@
+import math
 import sys
 
+import numpy as np
 from numba import njit, double, int16, boolean, prange
 from utils import *
+
+BROAD_STEPS = 200
+BROAD_TEST_CANDIDATES = 5
+BROAD_DISTANCE_MAX = 50
+
+FINE_ANGLE_RANGE = math.radians(3)
+FINE_STEPS = 200
 
 
 class SimulationHandler:
@@ -34,8 +43,10 @@ class SimulationHandler:
             self.planet_masses[i] = planet.mass
 
     def scan_for(self, target_id):
-        angle_list = np.linspace(0, 360, 10)
-        print(angle_list.size)
+        # broad scan
+        sys.stdout.write(f"broad scan for player {target_id} started...")
+        # create angle list, remove last angle to avoid doubling 0 / 360°
+        angle_list = np.linspace(0, 2 * math.pi, BROAD_STEPS + 1)[:-1]
         results = np.zeros(dtype=np.float64, shape=(angle_list.size,))
         scan_list(planet_positions=self.planet_positions,
                   planet_radii=self.planet_radii,
@@ -46,19 +57,36 @@ class SimulationHandler:
                   angle_count=angle_list.size,
                   velocity=10,
                   results=results)
-        sys.stdout.write("[")
-        for i in results[:-1]:
-            sys.stdout.write(f"{round(i)},")
-        sys.stdout.write(f"{round(results[-1])}]\n[")
-        for i in angle_list[:-1]:
-            sys.stdout.write(f"{round(i)},")
-        sys.stdout.write(f"{round(angle_list[-1])}]\n")
-        best_index = np.where(results == min(results))[0][0]
-        best_angle = angle_list[best_index]
-        print(f"Best results found for angle {round(best_angle,2)}°, where the distance was: {round(results[best_index])}")
-        print(best_angle)
+        print("done.\nbest angles for broad scan:")
+        sorted_angles = angle_list[results.argsort()][:BROAD_TEST_CANDIDATES]
+        sorted_angles = sorted_angles[sorted_angles < BROAD_DISTANCE_MAX]
 
-        return best_angle
+        if sorted_angles.size == 0:
+            print("No viable angles found. Aborting.")
+            exit(0)
+
+        print([round(math.degrees(x), 3) for x in sorted_angles])
+
+        for test_angle in sorted_angles:
+            print(f"testing angle {math.degrees(test_angle)}°...")
+            # create angle list, remove last angle to avoid doubling 0 / 360°
+            angle_list = np.linspace(test_angle - FINE_ANGLE_RANGE / 2,
+                                     test_angle + FINE_ANGLE_RANGE / 2,
+                                     FINE_STEPS + 1)[:-1]
+            results = np.zeros(dtype=np.float64, shape=(angle_list.size,))
+            scan_list(planet_positions=self.planet_positions,
+                      planet_radii=self.planet_radii,
+                      planet_masses=self.planet_masses,
+                      start_position=self.player_positions[self.own_id],
+                      target_position=self.player_positions[target_id],
+                      angle_list=angle_list,
+                      angle_count=angle_list.size,
+                      velocity=10,
+                      results=results)
+            if (results == 0).any():
+                found_angle = angle_list[np.where(results == 0)[0][0]]
+                print(f"\n{found_angle}")
+                return found_angle
 
 
 @njit(nogil=True, parallel=True)
