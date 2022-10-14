@@ -1,6 +1,4 @@
-import math
 import random
-import time
 from datetime import datetime
 
 from SimulationHandler import SimulationHandler
@@ -52,12 +50,12 @@ class AppleBot:
             return
         if not self.opponent_ids:
             return
-        print("Updating simulation...")
+        self.msg("Updating simulation...")
         self.simulation.set_field(self.planets, self.players, self.id)
+        self.last_scan = datetime.fromtimestamp(0)
 
     def process_incoming(self):
         update_flag = False
-        self.msg("Processing incoming...")
         struct_data = self.connection.receive_struct("II")
 
         # recv timed out
@@ -105,13 +103,11 @@ class AppleBot:
 
         # shot begin
         elif msg_type == 5:
-            angle, velocity = self.connection.receive_struct("dd")
-            self.msg(f"player {payload} launched a missile with angle {round(angle, 3)}° and velocity {velocity}")
+            _, _ = self.connection.receive_struct("dd")
 
         # shot end (discard shot data)
         elif msg_type == 6:
-            self.msg("Discarding shot data...")
-            angle, velocity, length = self.connection.receive_struct("ddI")
+            _, _, length = self.connection.receive_struct("ddI")
             for i in range(length):
                 _ = self.connection.receive_struct("ff")
 
@@ -133,7 +129,7 @@ class AppleBot:
             for i in range(payload):
                 x, y, radius, mass = self.connection.receive_struct("dddd")
                 self.planets.append(Planet(x, y, radius, mass, i))
-            self.msg(f"planet data for {len(self.planets)} planets received")
+            self.msg(f"Map data changed. {len(self.planets)} planets received.")
             update_flag = True
 
         # unknown MSG_TYPE
@@ -163,5 +159,8 @@ class AppleBot:
 
         target_player = self.players[random.choice(self.opponent_ids)]
         result = self.simulation.scan_for(target_player.id)
+        # No target found
+        if result == -1:
+            return
         self.connection.send_str(f"v {10}")
         self.connection.send_str(f"{math.degrees(result)}")

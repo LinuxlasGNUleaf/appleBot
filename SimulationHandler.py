@@ -1,16 +1,11 @@
-import math
-import sys
-
-import numpy as np
-from numba import njit, double, int16, boolean, prange
+from numba import njit, double, int16, prange
 from utils import *
 
-BROAD_STEPS = 200
+BROAD_STEPS = 100
 BROAD_TEST_CANDIDATES = 5
 BROAD_DISTANCE_MAX = 50
 
-FINE_ANGLE_RANGE = math.radians(3)
-FINE_STEPS = 200
+FINE_STEPS = 150
 
 
 class SimulationHandler:
@@ -24,6 +19,9 @@ class SimulationHandler:
         self.planet_positions: np.ndarray(dtype=np.float64, shape=(NUM_PLANETS, 2)) = np.zeros((NUM_PLANETS, 2))
         self.planet_radii: np.ndarray(dtype=np.float64, shape=(NUM_PLANETS, 0)) = np.zeros((NUM_PLANETS,))
         self.planet_masses: np.ndarray(dtype=np.float64, shape=(NUM_PLANETS, 0)) = np.zeros((NUM_PLANETS,))
+
+    def msg(self, message):
+        print(f"[{self.__class__.__name__}]: {message}")
 
     def set_field(self, planets: list[Planet], players: dict[int, Player], own_id: int):
         self.initialized = True
@@ -44,7 +42,7 @@ class SimulationHandler:
 
     def scan_for(self, target_id):
         # broad scan
-        sys.stdout.write(f"broad scan for player {target_id} started...")
+        self.msg(f"broad scan for player {target_id} started...")
         # create angle list, remove last angle to avoid doubling 0 / 360°
         angle_list = np.linspace(0, 2 * math.pi, BROAD_STEPS + 1)[:-1]
         results = np.zeros(dtype=np.float64, shape=(angle_list.size,))
@@ -57,21 +55,22 @@ class SimulationHandler:
                   angle_count=angle_list.size,
                   velocity=10,
                   results=results)
-        print("done.\nbest angles for broad scan:")
+        self.msg("best angles for broad scan:")
         sorted_angles = angle_list[results.argsort()][:BROAD_TEST_CANDIDATES]
         sorted_angles = sorted_angles[sorted_angles < BROAD_DISTANCE_MAX]
 
         if sorted_angles.size == 0:
-            print("No viable angles found. Aborting.")
-            exit(0)
+            self.msg("No viable angles found. Aborting.")
+            return -1
 
-        print([round(math.degrees(x), 3) for x in sorted_angles])
+        self.msg([round(math.degrees(x), 3) for x in sorted_angles])
 
         for test_angle in sorted_angles:
-            print(f"testing angle {math.degrees(test_angle)}°...")
+            self.msg(f"testing angle {round(math.degrees(test_angle),2)}°...")
             # create angle list, remove last angle to avoid doubling 0 / 360°
-            angle_list = np.linspace(test_angle - FINE_ANGLE_RANGE / 2,
-                                     test_angle + FINE_ANGLE_RANGE / 2,
+            angle_range = 2*math.pi / BROAD_STEPS
+            angle_list = np.linspace(test_angle - angle_range,
+                                     test_angle + angle_range,
                                      FINE_STEPS + 1)[:-1]
             results = np.zeros(dtype=np.float64, shape=(angle_list.size,))
             scan_list(planet_positions=self.planet_positions,
@@ -84,9 +83,13 @@ class SimulationHandler:
                       velocity=10,
                       results=results)
             if (results == 0).any():
-                found_angle = angle_list[np.where(results == 0)[0][0]]
-                print(f"\n{found_angle}")
+                selected_index = np.where(results == 0)[0][0]
+                found_angle = angle_list[selected_index]
+                self.msg(f"target angle: {math.degrees(found_angle)}° target dist: {results[selected_index]}")
                 return found_angle
+
+        self.msg("No viable angles found. Aborting.")
+        return -1
 
 
 @njit(nogil=True, parallel=True)
