@@ -162,5 +162,5 @@ class AppleBot:
         # No target found
         if result == -1:
             return
-        self.connection.send_str(f"v {10}")
-        self.connection.send_str(f"{math.degrees(result)}")
+        self.connection.send_str(f"v {result[1]}")
+        self.connection.send_str(f"{math.degrees(result[0])}")

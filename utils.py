@@ -4,7 +4,7 @@ import numpy as np
 A = 2e6
 BATTLE_FIELD_W: float = math.sqrt(A * 16 / 9)
 BATTLE_FIELD_H: float = math.sqrt(A * 9 / 16)
-F_PLAYER_SIZE: float = 4.0
+F_PLAYER_SIZE: float = 3.9
 MARGIN: int = 500
 
 NUM_PLANETS: int = 24

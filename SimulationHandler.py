@@ -1,11 +1,12 @@
 from numba import njit, double, int16, prange
 from utils import *
 
-BROAD_STEPS = 100
+BROAD_STEPS = 120
 BROAD_TEST_CANDIDATES = 5
-BROAD_DISTANCE_MAX = 50
+BROAD_DISTANCE_MAX = 40
 
-FINE_STEPS = 150
+FINE_STEPS = 120
+VELOCITY_RANGE = (10, 11, 0.5)
 
 
 class SimulationHandler:
@@ -40,12 +41,8 @@ class SimulationHandler:
             self.planet_radii[i] = planet.radius
             self.planet_masses[i] = planet.mass
 
-    def scan_for(self, target_id):
-        # broad scan
-        self.msg(f"broad scan for player {target_id} started...")
-        # create angle list, remove last angle to avoid doubling 0 / 360°
-        angle_list = np.linspace(0, 2 * math.pi, BROAD_STEPS + 1)[:-1]
-        results = np.zeros(dtype=np.float64, shape=(angle_list.size,))
+    def run_scanlist(self, target_id, angle_list, velocity):
+        results = np.full(dtype=np.float64, shape=(angle_list.size,), fill_value=math.inf)
         scan_list(planet_positions=self.planet_positions,
                   planet_radii=self.planet_radii,
                   planet_masses=self.planet_masses,
@@ -53,40 +50,43 @@ class SimulationHandler:
                   target_position=self.player_positions[target_id],
                   angle_list=angle_list,
                   angle_count=angle_list.size,
-                  velocity=10,
+                  velocity=velocity,
                   results=results)
-        self.msg("best angles for broad scan:")
-        sorted_angles = angle_list[results.argsort()][:BROAD_TEST_CANDIDATES]
-        sorted_angles = sorted_angles[sorted_angles < BROAD_DISTANCE_MAX]
+        return results
 
-        if sorted_angles.size == 0:
-            self.msg("No viable angles found. Aborting.")
-            return -1
-
-        self.msg([round(math.degrees(x), 3) for x in sorted_angles])
-
-        for test_angle in sorted_angles:
-            self.msg(f"testing angle {round(math.degrees(test_angle),2)}°...")
+    def scan_for(self, target_id):
+        for velocity in np.arange(*VELOCITY_RANGE):
+            # broad scan
+            self.msg(f"broad scan for player {target_id} with velocity {velocity} started...")
             # create angle list, remove last angle to avoid doubling 0 / 360°
-            angle_range = 2*math.pi / BROAD_STEPS
-            angle_list = np.linspace(test_angle - angle_range,
-                                     test_angle + angle_range,
-                                     FINE_STEPS + 1)[:-1]
-            results = np.zeros(dtype=np.float64, shape=(angle_list.size,))
-            scan_list(planet_positions=self.planet_positions,
-                      planet_radii=self.planet_radii,
-                      planet_masses=self.planet_masses,
-                      start_position=self.player_positions[self.own_id],
-                      target_position=self.player_positions[target_id],
-                      angle_list=angle_list,
-                      angle_count=angle_list.size,
-                      velocity=10,
-                      results=results)
-            if (results == 0).any():
-                selected_index = np.where(results == 0)[0][0]
-                found_angle = angle_list[selected_index]
-                self.msg(f"target angle: {math.degrees(found_angle)}° target dist: {results[selected_index]}")
-                return found_angle
+            angle_list = np.linspace(0, 2 * math.pi, BROAD_STEPS + 1)[:-1]
+            # run sim
+            results = self.run_scanlist(target_id, angle_list, velocity)
+
+            self.msg("best angles for broad scan:")
+            sorted_angles = angle_list[results.argsort()][:BROAD_TEST_CANDIDATES]
+            sorted_angles = sorted_angles[sorted_angles < BROAD_DISTANCE_MAX]
+
+            if sorted_angles.size == 0:
+                self.msg("No viable angles found at this velocity.")
+                continue
+
+            self.msg([round(math.degrees(x), 3) for x in sorted_angles])
+
+            for test_angle in sorted_angles:
+                self.msg(f"testing angle {round(math.degrees(test_angle),2)}°...")
+                # create angle list, remove last angle to avoid doubling 0 / 360°
+                angle_range = 2*math.pi / BROAD_STEPS
+                angle_list = np.linspace(test_angle - angle_range,
+                                         test_angle + angle_range,
+                                         FINE_STEPS + 1)[:-1]
+                results = self.run_scanlist(target_id, angle_list, velocity)
+                if (results == 0).any():
+                    selected_index = np.where(results == 0)[0][0]
+                    found_angle = angle_list[selected_index]
+                    self.msg(f"target angle: {math.degrees(found_angle)}°")
+                    return found_angle, velocity
+            self.msg("No viable angles found at this velocity.")
 
         self.msg("No viable angles found. Aborting.")
         return -1
