@@ -4,7 +4,7 @@ import numpy as np
 A = 2e6
 BATTLE_FIELD_W: float = math.sqrt(A * 16 / 9)
 BATTLE_FIELD_H: float = math.sqrt(A * 9 / 16)
-F_PLAYER_SIZE: float = 3.9
+F_PLAYER_SIZE: float = 3.75
 MARGIN: int = 500
 
 NUM_PLANETS: int = 24
@@ -13,7 +13,6 @@ MAX_SEGMENTS: int = 2000
 SEGMENT_STEPS: int = 25
 
 ENERGY_UPDATE_INTERVAL = 2
-SCAN_INTERVAL = 10
 
 
 class Player:

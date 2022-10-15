@@ -14,15 +14,15 @@ class AppleBot:
         self.name = self.__class__.__name__
         self.planets = []
         self.players = {}
-        self.ignored_ids = []
-        self.opponent_ids = []
+        self.opponents = []
+        self.ignored_opponents = []
         self.angle = 0
         self.speed = 10
-        self.last_shot = []
         self.energy = 0
 
         self.last_energy_update = datetime.fromtimestamp(0)
-        self.last_scan = datetime.fromtimestamp(0)
+
+        self.update_flag = False
 
         self.init()
 
@@ -38,9 +38,6 @@ class AppleBot:
             self.angle -= 360
         return self.speed, self.angle
 
-    def report_shot(self, curve):
-        self.last_shot = curve
-
     def update_simulation(self):
         if self.id == -1:
             return
@@ -48,19 +45,17 @@ class AppleBot:
             return
         if not self.planets:
             return
-        if not self.opponent_ids:
+        if not self.opponents:
             return
         self.msg("Updating simulation...")
         self.simulation.set_field(self.planets, self.players, self.id)
-        self.last_scan = datetime.fromtimestamp(0)
 
     def process_incoming(self):
-        update_flag = False
         struct_data = self.connection.receive_struct("II")
 
         # recv timed out
         if struct_data is None:
-            return
+            return False
 
         msg_type, payload = struct_data
 
@@ -68,33 +63,36 @@ class AppleBot:
         if msg_type == 1:
             self.id = payload
             self.msg(f"set id to {payload}")
-            update_flag = True
+            self.update_flag = True
 
         # player left
         elif msg_type == 2:
             self.msg(f"Player {payload} left.")
             del self.players[payload]
-            self.opponent_ids.remove(payload)
-            update_flag = True
+            self.opponents.remove(payload)
+            self.update_flag = True
 
         # player joined/reset
         elif msg_type == 3:
             x, y = self.connection.receive_struct("ff")
-
             if payload not in self.players:
                 self.msg(f"player {payload} joined the game at ({round(x)},{round(y)})")
                 if payload != self.id:
-                    self.opponent_ids.append(payload)
+                    self.opponents.append(payload)
                 new_player = Player(x, y, payload)
 
             else:
                 self.msg(f"player {payload} moved to ({round(x)},{round(y)})")
+                if payload in self.ignored_opponents:
+                    self.ignored_opponents.remove(payload)
+                elif payload == self.id:
+                    self.ignored_opponents.clear()
                 new_player = self.players[payload]
                 new_player.position[0] = x
                 new_player.position[1] = y
 
             self.players[payload] = new_player
-            update_flag = True
+            self.update_flag = True
 
         # shot finished msg, deprecated
         elif msg_type == 4:
@@ -129,38 +127,48 @@ class AppleBot:
             for i in range(payload):
                 x, y, radius, mass = self.connection.receive_struct("dddd")
                 self.planets.append(Planet(x, y, radius, mass, i))
-            self.msg(f"Map data changed. {len(self.planets)} planets received.")
+            self.msg(f"map data changed. {payload} planets received.")
             update_flag = True
 
         # unknown MSG_TYPE
         else:
             self.msg(f"Unexpected message_type: '{msg_type}'\n\t- data: '{payload}'")
+            return False
 
-        if update_flag:
-            self.update_simulation()
+        return True
 
     def loop(self):
+        if self.process_incoming():
+            return
 
         if (datetime.now() - self.last_energy_update).seconds > ENERGY_UPDATE_INTERVAL:
             self.connection.send_str("u")
             self.last_energy_update = datetime.now()
+            return
 
-        if (datetime.now() - self.last_scan).seconds > SCAN_INTERVAL:
-            self.scan_field()
-            self.last_scan = datetime.now()
-
-        self.process_incoming()
+        self.scan_field()
 
     def scan_field(self):
-        if not self.opponent_ids:
-            return
-        if not self.simulation.initialized:
+        possible_targets = list(set(self.opponents).difference(set(self.ignored_opponents)))
+
+        # No viable opponents found to target (any opponents still on the board haven't moved since last scan)
+        if not possible_targets:
             return
 
-        target_player = self.players[random.choice(self.opponent_ids)]
-        result = self.simulation.scan_for(target_player.id)
+        # update simulation field if flag is set
+        if self.update_flag:
+            self.msg("Update flag set, updating field...")
+            self.simulation.set_field(self.planets, self.players, self.id)
+            self.update_flag = False
+        # if field is not ready yet, return
+        elif not self.simulation.initialized:
+            return
+
+        target_player = random.choice(possible_targets)
+        result = self.simulation.scan_for(target_player)
         # No target found
         if result == -1:
             return
-        self.connection.send_str(f"v {result[1]}")
+        self.connection.send_str(f"c\nv {result[1]}")
         self.connection.send_str(f"{math.degrees(result[0])}")
+        self.ignored_opponents.append(target_player)

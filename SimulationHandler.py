@@ -1,12 +1,14 @@
+import sys
+
 from numba import njit, double, int16, prange
 from utils import *
 
 BROAD_STEPS = 120
-BROAD_TEST_CANDIDATES = 5
+BROAD_TEST_CANDIDATES = 4
 BROAD_DISTANCE_MAX = 40
 
 FINE_STEPS = 120
-VELOCITY_RANGE = (10, 11, 0.5)
+VELOCITY_RANGE = (10, 11.6, 0.5)
 
 
 class SimulationHandler:
@@ -14,27 +16,28 @@ class SimulationHandler:
         self.own_id: int = -1
         self.initialized = False
 
-        self.player_positions: np.ndarray(dtype=np.float64, shape=(MAX_PLAYERS, 2)) = np.zeros((MAX_PLAYERS, 2))
-        self.player_ids: np.ndarray(dtype=int, shape=(MAX_PLAYERS,)) = np.zeros((MAX_PLAYERS,), dtype=int)
-        self.player_count: int = -1
-        self.planet_positions: np.ndarray(dtype=np.float64, shape=(NUM_PLANETS, 2)) = np.zeros((NUM_PLANETS, 2))
-        self.planet_radii: np.ndarray(dtype=np.float64, shape=(NUM_PLANETS, 0)) = np.zeros((NUM_PLANETS,))
-        self.planet_masses: np.ndarray(dtype=np.float64, shape=(NUM_PLANETS, 0)) = np.zeros((NUM_PLANETS,))
+        self.player_positions: np.ndarray(dtype=np.float64, shape=(MAX_PLAYERS, 2)) =\
+            np.zeros((MAX_PLAYERS, 2))
+        self.planet_positions: np.ndarray(dtype=np.float64, shape=(NUM_PLANETS, 2)) =\
+            np.zeros((NUM_PLANETS, 2))
+        self.planet_radii: np.ndarray(dtype=np.float64, shape=(NUM_PLANETS, 0)) =\
+            np.zeros((NUM_PLANETS,))
+        self.planet_masses: np.ndarray(dtype=np.float64, shape=(NUM_PLANETS, 0)) =\
+            np.zeros((NUM_PLANETS,))
 
     def msg(self, message):
         print(f"[{self.__class__.__name__}]: {message}")
 
     def set_field(self, planets: list[Planet], players: dict[int, Player], own_id: int):
         self.initialized = True
-
         self.own_id = own_id
 
         # populate numpy arrays
-        players = players.values()
-        for i, player in enumerate(players):
-            self.player_positions[i] = player.position
-            self.player_ids[i] = player.id
-        self.player_count = len(players)
+        for pid in range(MAX_PLAYERS):
+            if pid in players:
+                self.player_positions[pid] = players[pid].position
+            else:
+                self.player_positions[pid] = np.zeros(dtype=np.float64, shape=(2,))
 
         for i, planet in enumerate(planets):
             self.planet_positions[i] = planet.position
@@ -55,28 +58,31 @@ class SimulationHandler:
         return results
 
     def scan_for(self, target_id):
+        self.msg(f"==> SCANNING FOR PLAYER {target_id}")
         for velocity in np.arange(*VELOCITY_RANGE):
             # broad scan
-            self.msg(f"broad scan for player {target_id} with velocity {velocity} started...")
+            sys.stdout.write(f"[{self.__class__.__name__}]: Scanning with velocity {velocity}...")
+
             # create angle list, remove last angle to avoid doubling 0 / 360°
             angle_list = np.linspace(0, 2 * math.pi, BROAD_STEPS + 1)[:-1]
             # run sim
             results = self.run_scanlist(target_id, angle_list, velocity)
 
-            self.msg("best angles for broad scan:")
+            sys.stdout.write("done.\n")
             sorted_angles = angle_list[results.argsort()][:BROAD_TEST_CANDIDATES]
             sorted_angles = sorted_angles[sorted_angles < BROAD_DISTANCE_MAX]
 
             if sorted_angles.size == 0:
+                sys.stdout.write("\n")
                 self.msg("No viable angles found at this velocity.")
                 continue
 
-            self.msg([round(math.degrees(x), 3) for x in sorted_angles])
+            sys.stdout.write(f"[{self.__class__.__name__}]: Testing {len(sorted_angles)} viable angles...")
 
             for test_angle in sorted_angles:
-                self.msg(f"testing angle {round(math.degrees(test_angle),2)}°...")
+                sys.stdout.write(f"\n[{self.__class__.__name__}]: Testing angle {round(math.degrees(test_angle), 2)}°...")
                 # create angle list, remove last angle to avoid doubling 0 / 360°
-                angle_range = 2*math.pi / BROAD_STEPS
+                angle_range = 2 * math.pi / BROAD_STEPS
                 angle_list = np.linspace(test_angle - angle_range,
                                          test_angle + angle_range,
                                          FINE_STEPS + 1)[:-1]
@@ -84,11 +90,13 @@ class SimulationHandler:
                 if (results == 0).any():
                     selected_index = np.where(results == 0)[0][0]
                     found_angle = angle_list[selected_index]
-                    self.msg(f"target angle: {math.degrees(found_angle)}°")
+                    sys.stdout.write(f"done.\n")
+                    self.msg(f"TARGET ANGLE: {round(math.degrees(found_angle),2)}°")
                     return found_angle, velocity
+            sys.stdout.write("\n")
             self.msg("No viable angles found at this velocity.")
 
-        self.msg("No viable angles found. Aborting.")
+        self.msg("==> NO ANGLES FOUND. ABORTING.")
         return -1
 
 

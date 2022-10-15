@@ -59,14 +59,17 @@ class SocketManager:
         payload = bytes(string, 'UTF-8')
         byte_count = len(payload)
         byte_i = 0
-        while byte_i < byte_count:
-            new_bytes = self.socket.send(payload[byte_i:])
-            if not new_bytes:
-                print("Connection dropped unexpectedly during SEND.")
-                exit(1)
+        try:
+            while byte_i < byte_count:
+                new_bytes = self.socket.send(payload[byte_i:])
+                if not new_bytes:
+                    raise BrokenPipeError
 
-            byte_i += new_bytes
-        return True
+                byte_i += new_bytes
+            return True
+        except BrokenPipeError:
+            print("Connection dropped unexpectedly during SEND.")
+            exit(1)
 
     def receive_struct(self, struct_format):
         byte_struct = self.receive_bytes(struct.calcsize(struct_format))
