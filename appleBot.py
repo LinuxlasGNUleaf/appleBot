@@ -1,3 +1,4 @@
+import math
 import random
 from datetime import datetime
 
@@ -8,7 +9,7 @@ from utils import *
 class AppleBot:
     def __init__(self, socket_manager):
         self.connection = socket_manager
-        self.simulation = SimulationHandler()
+        self.simulation = SimulationHandler(self)
 
         self.id = -1
         self.name = self.__class__.__name__
@@ -20,17 +21,30 @@ class AppleBot:
         self.speed = 10
         self.energy = 0
 
-        self.last_energy_update = datetime.fromtimestamp(0)
+        self.last_name_update = datetime.fromtimestamp(0)
 
         self.update_flag = False
+        self.ignore_msg_sent = False
 
         self.init()
 
     def init(self):
-        self.connection.send_str(f"n {self.name}")
+        self.show_state("IDLING")
+
+    def show_state(self, state):
+        if state == "IDLING":
+            state = "-"
+        elif state == "SCANNING":
+            state = "0"
+        elif state == "TARGETING":
+            state = "X"
+        else:
+            state = "[???]"
+
+        self.connection.send_str(f"n {self.name} [{state}]")
 
     def msg(self, message):
-        print(f"[{self.__class__.__name__}]: {message}")
+        print(f"[{datetime.now()}] [{self.__class__.__name__}]: {message}")
 
     def shoot(self):
         self.angle += 361 / 36.0
@@ -48,7 +62,7 @@ class AppleBot:
         if not self.opponents:
             return
         self.msg("Updating simulation...")
-        self.simulation.set_field(self.planets, self.players, self.id)
+        self.simulation.update_field()
 
     def process_incoming(self):
         struct_data = self.connection.receive_struct("II")
@@ -70,6 +84,8 @@ class AppleBot:
             self.msg(f"Player {payload} left.")
             del self.players[payload]
             self.opponents.remove(payload)
+            if payload in self.ignored_opponents:
+                self.ignored_opponents.remove(payload)
             self.update_flag = True
 
         # player joined/reset
@@ -128,7 +144,7 @@ class AppleBot:
                 x, y, radius, mass = self.connection.receive_struct("dddd")
                 self.planets.append(Planet(x, y, radius, mass, i))
             self.msg(f"map data changed. {payload} planets received.")
-            update_flag = True
+            self.update_flag = True
 
         # unknown MSG_TYPE
         else:
@@ -141,11 +157,6 @@ class AppleBot:
         if self.process_incoming():
             return
 
-        if (datetime.now() - self.last_energy_update).seconds > ENERGY_UPDATE_INTERVAL:
-            self.connection.send_str("u")
-            self.last_energy_update = datetime.now()
-            return
-
         self.scan_field()
 
     def scan_field(self):
@@ -153,12 +164,15 @@ class AppleBot:
 
         # No viable opponents found to target (any opponents still on the board haven't moved since last scan)
         if not possible_targets:
+            if not self.ignore_msg_sent:
+                self.msg("Idling due to no viable opponents.")
+                self.ignore_msg_sent = True
             return
-
+        self.ignore_msg_sent = False
         # update simulation field if flag is set
         if self.update_flag:
             self.msg("Update flag set, updating field...")
-            self.simulation.set_field(self.planets, self.players, self.id)
+            self.simulation.update_field()
             self.update_flag = False
         # if field is not ready yet, return
         elif not self.simulation.initialized:
@@ -166,9 +180,13 @@ class AppleBot:
 
         target_player = random.choice(possible_targets)
         result = self.simulation.scan_for(target_player)
-        # No target found
-        if result == -1:
+        # field changed
+        if result == -2:
             return
-        self.connection.send_str(f"c\nv {result[1]}")
-        self.connection.send_str(f"{math.degrees(result[0])}")
+        # target parameters found
+        elif result != -1:
+            self.connection.send_str(f"c\nv {result[1]}")
+            self.connection.send_str(f"{math.degrees(result[0])}")
         self.ignored_opponents.append(target_player)
+
+        self.show_state("IDLING")
