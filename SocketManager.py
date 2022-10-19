@@ -1,21 +1,27 @@
+import logging
 import socket
 import struct
 import sys
+import time
+
+from spinners import Spinners
 
 
 class SocketManager:
-    def __init__(self, ip, port, version, recv_timeout):
-        # set up socket and connect
+    def __init__(self, ip, port, retry_interval, version, recv_timeout):
+        self.logger = logging.getLogger(__name__)
+
+        # set up socket and establish connection
         self.connected = False
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.ip = ip
         self.port = port
+        self.retry_interval = retry_interval
         self.bot_ver = version
         self.recv_timeout = recv_timeout
-        self.initialize()
 
     def initialize(self):
-        self.connect()
+        self.establish_connection()
         self.discard_all(1)
         self.send_str(f"b {self.bot_ver}")
 
@@ -39,7 +45,7 @@ class SocketManager:
             try:
                 new_buf = self.socket.recv(byte_count)
                 if not new_buf:
-                    print("Connection dropped unexpectedly during RECV.")
+                    self.logger.error("Connection dropped unexpectedly during RECV.")
                     exit(1)
 
                 buf += new_buf
@@ -68,7 +74,7 @@ class SocketManager:
                 byte_i += new_bytes
             return True
         except BrokenPipeError:
-            print("Connection dropped unexpectedly during SEND.")
+            self.logger.error("Connection dropped unexpectedly during SEND.")
             exit(1)
 
     def receive_struct(self, struct_format):
@@ -78,22 +84,43 @@ class SocketManager:
         return struct.unpack(struct_format, byte_struct)
 
     def close(self):
-        sys.stdout.write("Closing socket connection...")
+        self.logger.info("Closing socket connection...")
         try:
             self.socket.close()
-            print("success.")
+            self.logger.info("success.")
         except TimeoutError:
-            print("failed.\nUnable to drop the connection, maybe the connection is already dead?")
+            self.logger.warning("failed.\nUnable to drop the connection, maybe the connection is already dead?")
         self.connected = False
 
-    def connect(self) -> bool:
-        sys.stdout.write("Opening socket connection...")
+    def establish_connection(self):
+        self.logger.info("Opening socket connection...")
+        last_try = time.time()
+        spinner = Spinners['bouncingBall'].value
+        spinner_active = False
+        index = 0
+        while True:
+            try:
+                self.connect()
+                self.connected = True
+                if spinner_active:
+                    sys.stdout.write("success.\n")
+                self.logger.info("Socket connection established.")
+                return
+            except (ConnectionRefusedError, ConnectionAbortedError):
+                try:
+                    while time.time() - last_try <= self.retry_interval:
+                        spinner_active = True
+                        sys.stdout.write(
+                            f"\r{spinner['frames'][index]} Waiting for connection on {self.ip}:{self.port}...")
+                        index = (index + 1) % len(spinner['frames'][index])
+                        time.sleep(spinner['interval'] / 1000)
+                    last_try = time.time()
+                except KeyboardInterrupt:
+                    sys.stdout.write("\b\bkeyboard interrupt, exiting.\n")
+                    exit(0)
+
+    def connect(self):
         try:
             self.socket.connect((self.ip, self.port))
-            self.connected = True
-            print("success.")
-            return True
-        except (ConnectionRefusedError, ConnectionAbortedError):
-            print(
-                f"failed.\nUnable to establish connection, is server at {self.ip}:{self.port} really up and reachable?")
-            exit(1)
+        except Exception as e:
+            raise e

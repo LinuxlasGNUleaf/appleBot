@@ -1,8 +1,9 @@
+import logging
 import math
-import sys
-from datetime import datetime
+import time
 
-from numba import njit, double, int16, prange
+from numba import njit, double, prange, int16
+
 from utils import *
 
 A = 2e6
@@ -17,35 +18,56 @@ MAX_SEGMENTS: int = 2000
 SEGMENT_STEPS: int = 25
 
 ENERGY_UPDATE_INTERVAL = 2
+# GENERAL SCAN SETTINGS
 
-BROAD_STEPS = 120
+S_DISTANCE_THRESHOLD = A / 5
+L_DISTANCE_THRESHOLD = A * 1 / 3
+
+S_VELOCITY_RANGE = [12, 10, 13]
+M_VELOCITY_RANGE = [13, 11, 14]
+F_VELOCITY_RANGE = [14, 12, 15]
+
+# BROAD SCAN SETTINGS
+BROAD_STEPS = 60
 BROAD_TEST_CANDIDATES = 5
-BROAD_DISTANCE_MAX = 20
+BROAD_DISTANCE_MAX = 10
 
-FINE_STEPS = 50
-VELOCITY_RANGE = [12, 13, 11, 14]
+# FINE SCAN SETTINGS
+FINE_STEPS = 40
 
 
 class SimulationHandler:
     def __init__(self, bot):
+        self.logger = logging.getLogger(__name__)
         self.bot = bot
         self.initialized = False
 
-        self.player_positions: np.ndarray(dtype=np.float64, shape=(MAX_PLAYERS, 2)) = \
+        self.player_positions: np.zeros(dtype=np.float64, shape=(MAX_PLAYERS, 2)) = \
             np.zeros((MAX_PLAYERS, 2))
-        self.planet_positions: np.ndarray(dtype=np.float64, shape=(NUM_PLANETS, 2)) = \
+        self.planet_positions: np.zeros(dtype=np.float64, shape=(NUM_PLANETS, 2)) = \
             np.zeros((NUM_PLANETS, 2))
-        self.planet_radii: np.ndarray(dtype=np.float64, shape=(NUM_PLANETS, 0)) = \
+        self.planet_radii: np.ones(dtype=np.float64, shape=(NUM_PLANETS, 0)) = \
             np.zeros((NUM_PLANETS,))
         self.planet_masses: np.ndarray(dtype=np.float64, shape=(NUM_PLANETS, 0)) = \
             np.zeros((NUM_PLANETS,))
 
-    def msg(self, message):
-        print(f"[{datetime.now()}] [{self.__class__.__name__}]: {message}")
+    def compile_functions(self):
+        self.logger.info("Gathering apples...")
+        compile_time = time.time()
+        scan_list(planet_positions=np.zeros(dtype=np.float64, shape=(NUM_PLANETS, 2)),
+                  planet_radii=np.zeros(dtype=np.float64, shape=(NUM_PLANETS,)),
+                  planet_masses=np.zeros(dtype=np.float64, shape=(NUM_PLANETS,)),
+                  start_position=np.zeros(dtype=np.float64, shape=(2,)),
+                  target_position=np.ones(dtype=np.float64, shape=(2,)),
+                  angle_list=np.zeros(dtype=np.float64, shape=(1,)),
+                  angle_count=1,
+                  velocity=10,
+                  results=np.zeros(dtype=np.float64, shape=(1,)))
+
+        compile_time = time.time() - compile_time
+        self.logger.info(f"Compilation took {round(compile_time, 3):04}s")
 
     def update_field(self):
-        self.initialized = True
-
         # populate numpy arrays
         for pid in range(MAX_PLAYERS):
             if pid in self.bot.players:
@@ -57,6 +79,8 @@ class SimulationHandler:
             self.planet_positions[i] = planet.position
             self.planet_radii[i] = planet.radius
             self.planet_masses[i] = planet.mass
+
+        self.initialized = True
 
     def run_scanlist(self, target_id, angle_list, velocity):
         results = np.full(dtype=np.float64, shape=(angle_list.size,), fill_value=math.inf)
@@ -87,11 +111,15 @@ class SimulationHandler:
         return False
 
     def scan_for(self, target_id):
-        self.msg(f"======> SCANNING FOR PLAYER {target_id}")
-        for velocity in VELOCITY_RANGE:
-            self.bot.show_state("SCANNING")
-            # broad scan
-            sys.stdout.write(f"[{datetime.now()}] [{self.__class__.__name__}]: Scanning with velocity {velocity}...")
+        self.logger.info(f"Now scanning for player {target_id}.")
+
+        t_diff = self.player_positions[self.bot.id] - self.player_positions[target_id]
+        distance = np.sqrt(t_diff.dot(t_diff))
+        self.logger.info(f"Target distance: {round(distance)}")
+
+        # broad scan
+        for velocity in M_VELOCITY_RANGE:
+            self.logger.info(f"Starting broad scan with velocity {velocity}.")
 
             # create angle list, remove last angle to avoid doubling 0 / 360°
             angle_list = np.linspace(0, 2 * math.pi, BROAD_STEPS + 1)[:-1]
@@ -102,22 +130,19 @@ class SimulationHandler:
             sorted_angles = sorted_angles[sorted_angles < BROAD_DISTANCE_MAX]
 
             if sorted_angles.size == 0:
-                sys.stdout.write("fail.\n")
-                self.msg("No viable angles found at this velocity.")
+                self.logger.info("Scan yielded no viable angles at this velocity.")
                 continue
             else:
-                sys.stdout.write("success.\n")
+                self.logger.info(f"Scan yielded {len(sorted_angles)} viable angles.")
 
             if self.check_for_relevant_update(target_id):
-                self.msg("Situation changed, aborting simulation.")
+                self.logger.info("Situation changed, aborting simulation.")
                 return -2  # field changed
 
-            self.msg(f"Exploring {len(sorted_angles)} viable angles:")
-            self.bot.show_state("TARGETING")
-
+            self.logger.info(
+                f"Starting fine scans for angles: {', '.join([f'{round(math.degrees(angle), 2):05}°' for angle in sorted_angles])}")
             for test_angle in sorted_angles:
-                sys.stdout.write(
-                    f"[{datetime.now()}] [{self.__class__.__name__}]: Exploring angle {round(math.degrees(test_angle), 2):05}°...")
+                self.logger.info(f"Exploring angle {round(math.degrees(test_angle), 2):05}°...")
                 # create angle list, remove last angle to avoid doubling 0 / 360°
                 angle_range = 2 * math.pi / BROAD_STEPS
                 angle_list = np.linspace(test_angle - angle_range,
@@ -126,22 +151,19 @@ class SimulationHandler:
                 results = self.run_scanlist(target_id, angle_list, velocity)
 
                 if self.check_for_relevant_update(target_id):
-                    sys.stdout.write("fail.\n")
-                    self.msg("Relevant information changed, aborting simulation.")
+                    self.logger.info("Relevant information changed, aborting simulation.")
                     return -2  # field changed
 
                 if (results < PLAYER_SIZE).any():
                     selected_index = np.where(results < PLAYER_SIZE)[0][0]
                     found_angle = angle_list[selected_index]
-                    sys.stdout.write(f"success.\n")
-                    self.msg(f"======> TARGET PARAMS: {round(math.degrees(found_angle), 2)}°, {velocity}")
+                    self.logger.info(
+                        f"Found trajectory with these parameters: {round(math.degrees(found_angle), 2)}°, {velocity}")
                     return found_angle, velocity
-                else:
-                    sys.stdout.write("fail.\n")
 
-            self.msg("No viable angles found at this velocity.")
+            self.logger.info("No viable angles found at this velocity.")
 
-        self.msg("======> NO ANGLES FOUND. ABORTING.")
+        self.logger.info("No viable angles found at any of the scanned velocities.")
         return -1
 
 
@@ -185,13 +207,14 @@ def simulate_shot(planet_positions: np.ndarray(dtype=np.float64, shape=(NUM_PLAN
 
     left_source: bool = False
     segment_count: int16 = 0
-    min_distance: float = np.linalg.norm(target_position - start_position)
+    t_diff = target_position - start_position
+    min_distance: float = np.sqrt(t_diff.dot(t_diff))
 
     while True:
         for i in range(NUM_PLANETS):
             # calculate vector and distance from planet to missile
             tmp_v = planet_positions[i] - position
-            distance = np.linalg.norm(tmp_v)
+            distance = np.sqrt(tmp_v.dot(tmp_v))
 
             # collision with planet?
             if distance <= planet_radii[i]:
@@ -214,8 +237,10 @@ def simulate_shot(planet_positions: np.ndarray(dtype=np.float64, shape=(NUM_PLAN
         position += tmp_v
 
         # check if missile hit target player
-        distance = np.linalg.norm(target_position - position)
-        self_distance = np.linalg.norm(target_position - start_position)
+        t_diff = target_position - position
+        s_diff = target_position - start_position
+        distance = np.sqrt(t_diff.dot(t_diff))
+        self_distance = np.sqrt(s_diff.dot(s_diff))
 
         min_distance = min(distance, min_distance)
         if left_source:
