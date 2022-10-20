@@ -20,16 +20,12 @@ SEGMENT_STEPS: int = 25
 ENERGY_UPDATE_INTERVAL = 2
 # GENERAL SCAN SETTINGS
 
-S_DISTANCE_THRESHOLD = A / 5
-L_DISTANCE_THRESHOLD = A * 1 / 3
-
-S_VELOCITY_RANGE = [12, 10, 13]
-M_VELOCITY_RANGE = [13, 11, 14]
-F_VELOCITY_RANGE = [14, 12, 15]
+VELOCITY_DEFAULT = 12
+VELOCITY_CHANGES = [0, 2, -1, 1, -2, 3, 4]
 
 # BROAD SCAN SETTINGS
 BROAD_STEPS = 60
-BROAD_TEST_CANDIDATES = 5
+BROAD_TEST_CANDIDATES = 3
 BROAD_DISTANCE_MAX = 10
 
 # FINE SCAN SETTINGS
@@ -115,10 +111,10 @@ class SimulationHandler:
 
         t_diff = self.player_positions[self.bot.id] - self.player_positions[target_id]
         distance = np.sqrt(t_diff.dot(t_diff))
-        self.logger.info(f"Target distance: {round(distance)}")
+        self.logger.info(f"Target distance: {round(distance*1000/A)}% of A")
 
         # broad scan
-        for velocity in M_VELOCITY_RANGE:
+        for velocity in [VELOCITY_DEFAULT + delta for delta in VELOCITY_CHANGES]:
             self.logger.info(f"Starting broad scan with velocity {velocity}.")
 
             # create angle list, remove last angle to avoid doubling 0 / 360°

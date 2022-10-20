@@ -184,7 +184,7 @@ class AppleBot:
         elif not self.simulation.initialized:
             return
 
-        target_player = random.choice(possible_targets)
+        target_player = sorted(possible_targets, key=lambda x: dist(self.players[x].position, self.players[self.id].position))[0]
         result = self.simulation.scan_for(target_player)
         # field changed
         if result == -2:
